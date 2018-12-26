@@ -2,6 +2,20 @@
 
  composite fk:
  https://stackoverflow.com/questions/9780163/composite-key-as-foreign-key-sql
+
+ how to get all fk:
+ http://www.conandalton.net/2008/09/list-foreign-key-constraints-in-oracle.html
+ click safely: https://www.binarytides.com/list-foreign-keys-in-mysql/+&cd=3&hl=en&ct=clnk&gl=ru
+
+ select 
+    concat(table_name, '.', column_name) as 'foreign key',  
+    concat(referenced_table_name, '.', referenced_column_name) as 'references'
+  from
+      information_schema.key_column_usage
+  where
+      referenced_table_name is not null;
+
+  use also: ORDINAL_POSITION | POSITION_IN_UNIQUE_CONSTRAINT
 */
 
 var metadata_credentials = {
@@ -91,4 +105,11 @@ function addColumn(host, database, table, column, props) {
         console.error(err)
       }
     });
+}
+
+// for internally defined keys
+// column1 {database, table, column, nullable, type, default}
+// column2 {database, table, column, nullable, type, default}
+function addFkInternal(host, column1, column2) {
+
 }
