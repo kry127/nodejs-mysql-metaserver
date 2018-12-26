@@ -6,16 +6,6 @@
  how to get all fk:
  http://www.conandalton.net/2008/09/list-foreign-key-constraints-in-oracle.html
  click safely: https://www.binarytides.com/list-foreign-keys-in-mysql/+&cd=3&hl=en&ct=clnk&gl=ru
-
- select 
-    concat(table_name, '.', column_name) as 'foreign key',  
-    concat(referenced_table_name, '.', referenced_column_name) as 'references'
-  from
-      information_schema.key_column_usage
-  where
-      referenced_table_name is not null;
-
-  use also: ORDINAL_POSITION | POSITION_IN_UNIQUE_CONSTRAINT
 */
 
 var metadata_credentials = {
