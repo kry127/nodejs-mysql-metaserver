@@ -148,13 +148,13 @@ function session(credential, db, table) {
       
       // if table var present, check if it is presented in scheme
       if (table) {
-        if (tables.arr.indexOf(db) == -1) {
+        if (tables.arr.indexOf(table) == -1) {
           // I think it's ok, if there is no tables appeared
           query_state = qse.cycle_analyze; // go to cycle analyze immediately
           query_state_machine_callback(); //cycling
           return;
         } else {
-          schemas.arr=[db] // left only db to analyze
+          tables.arr=[table] // left only table to analyze
         }
       }
     case qse.get_columns_prep:
