@@ -98,8 +98,90 @@ function addColumn(host, database, table, column, props) {
 }
 
 // for internally defined keys
-// column1 {database, table, column, nullable, type, default}
-// column2 {database, table, column, nullable, type, default}
-function addFkInternal(host, column1, column2) {
+// bind columns1 to columns2 (columns2 should be PK)
+// columns = [column, column, ..., column]
+// column: {database, table, column}
+function addFkInternal(host, columns1, columns2) {
+  // make three steps:
+  // 1.  gather column ID's
+  // 2.  check existence of FK
+  // 3.  add metadata information
+  var state = 0;
+  function callback(err, result) {
+    if (err) {
+      console.error(
+        `Error adding foreign key: 
+        ${column1.database}.${column1.table}.${column1.column} -> ${column2.database}.${column2.table}.${column2.column}`
+        );
+      console.error(err)
+    }
+    column_ids_1 = [];
+    column_ids_2 = [];
+    switch(state) {
+    case 0:
+      // here should gather all column ID's
+      state = 1;
+      con.query(`
+      SELECT id FROM \`column\`
+      WHERE \`column\`=${column1.column}
+      AND table_id=
+      (
+        SELECT id FROM \`table\` WHERE \`table\`=${column1.table} AND database_id=
+        (
+          SELECT id FROM \`database\` WHERE \`database\`=${column1.database} AND host_id=
+          (
+            SELECT id FROM host where host=${host}
+          )
+        )
+      )
+      `, callback);
+    case 1:
+      
+      break;
+    }
+  }
+}
 
+// checks if such Foreign Key already exists in the database.
+function FKExist(column_ids_1, column_ids_2, callback) {
+  let L = Math.min(column_ids_1.length, column_ids_2.length);
+  if (L == 0) {
+    callback(false);
+    return;
+  }
+  callback(false);
+  return; // let's assume it's always false :D
+  
+  // algorithm:
+  //  1. For every pair (column_id_1i, column_id_2i) get list of FK id's
+  //  2. Find intersection of all sets, result: set of candidate FK id's
+  //  3. For every foreign key id find count of containing columns
+  //  4. If result of 3 contains same number, as length of column_ids, then return true, oth false
+
+  /*
+  var init_list = [
+    SELECT foreign_key_id
+    FROM `foreign keys`
+    WHERE column1_id = ${column_ids_1[0]} AND column2_id = ${column_ids_2[0]}
+  ]
+  */
+
+  for (let k = 1; k < L; k++) {
+      /*
+      init_list = [
+        SELECT foreign_key_id
+        FROM `foreign keys`
+        WHERE column1_id = ${column_ids_1[k]} AND column2_id = ${column_ids_2[k]}
+        AND foreign_key_id in [${init_list.join(",")]}
+      ]
+      */
+  }
+
+  /*
+    SELECT foreign_key_id, COUNT(*) as cnt
+    FROM `foreign keys`
+    WHERE foreign_key_id in [${init_list.join(",")]}
+    HAVING cnt = ${L}
+  */
+  // return true if last query is not empty
 }

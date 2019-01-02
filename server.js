@@ -2,6 +2,10 @@ var mysql = require('mysql');
 var fs = require('fs');
 const readline = require('readline');
 
+// how to make sync nodejs mysql:
+// https://html5hive.org/node-js-quickies-working-with-mysql/
+// https://code.tutsplus.com/tutorials/managing-the-asynchronous-nature-of-nodejs--net-36183
+
 // interface for readline
 const rl = readline.createInterface({
   input: process.stdin,
