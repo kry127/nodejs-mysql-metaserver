@@ -99,9 +99,10 @@ function addColumn(host, database, table, column, props) {
 
 // for internally defined keys
 // bind columns1 to columns2 (columns2 should be PK)
+// column_group: {host, database, table, columns}
 // columns = [column, column, ..., column]
-// column: {database, table, column}
-function addFkInternal(host, columns1, columns2) {
+// commonly, columns1 should be in table A, and columns2 should bein table B
+function addFkInternal(column_group1, column_group2) {
   // make three steps:
   // 1.  gather column ID's
   // 2.  check existence of FK
@@ -111,45 +112,106 @@ function addFkInternal(host, columns1, columns2) {
     if (err) {
       console.error(
         `Error adding foreign key: 
-        ${column1.database}.${column1.table}.${column1.column} -> ${column2.database}.${column2.table}.${column2.column}`
+        ${column_group1.host}.${column_group1.database}.${column_group1.table} -> ${column_group2.host}.${column_group2.database}.${column_group2.table}`
         );
       console.error(err)
     }
     column_ids_1 = [];
     column_ids_2 = [];
-    switch(state) {
-    case 0:
-      // here should gather all column ID's
-      state = 1;
-      con.query(`
-      SELECT id FROM \`column\`
-      WHERE \`column\`=${column1.column}
-      AND table_id=
-      (
-        SELECT id FROM \`table\` WHERE \`table\`=${column1.table} AND database_id=
+    var ids_1_i = 0;
+    var ids_2_i = 0;
+    while (true) {
+      switch(state) {
+      case 0:
+        // here should gather all column ID's
+        state = 1;
+        con.query(`
+        SELECT id FROM \`column\`
+        WHERE \`column\`=${column_group1.columns[ids_1_i]}
+        AND table_id=
         (
-          SELECT id FROM \`database\` WHERE \`database\`=${column1.database} AND host_id=
+          SELECT id FROM \`table\` WHERE \`table\`=${column_group1.table} AND database_id=
           (
-            SELECT id FROM host where host=${host}
+            SELECT id FROM \`database\` WHERE \`database\`=${column_group1.database} AND host_id=
+            (
+              SELECT id FROM host where host=${column_group1.host}
+            )
           )
         )
-      )
-      `, callback);
-    case 1:
-      
-      break;
+        `, callback);
+      case 1:
+        column_ids_1.push(result[0].id);
+        ids_1_i++;
+        if (ids_1_i < column_group1.columns.length) {
+          state = 0;
+          break;
+        }
+        
+      case 2:
+        state = 3;
+        con.query(`
+        SELECT id FROM \`column\`
+        WHERE \`column\`=${column_group2.columns[ids_2_i]}
+        AND table_id=
+        (
+          SELECT id FROM \`table\` WHERE \`table\`=${column_group2.table} AND database_id=
+          (
+            SELECT id FROM \`database\` WHERE \`database\`=${column_group2.database} AND host_id=
+            (
+              SELECT id FROM host where host=${column_group2.host}
+            )
+          )
+        )
+        `, callback);
+      case 3:
+        column_ids_2.push(result[0].id);
+        ids_2_i++;
+        if (ids_2_i < column_group2.columns.length) {
+          state = 2;
+          break;
+        }
+        // check if FK already exists
+        state = 4;
+        FKExist(column_ids_1, column_ids_2, callback);
+      case 4:
+        if (result)
+          return; // FK already presented in database
+        // otherwize, give FK unique ID, and push pairs (column_ids_1, column_ids_2)  to metatable
+        // get unique FK ID
+        state = 5;
+        con.query(`SELECT max(foreign_key_id) + 1 as fk_id FROM \`foreign keys\``, callback);
+        break;
+      case 5:
+        state = 6;
+        var fk_id = result[0].fk_id;
+        var values_to_insert = column_ids_1.map((e,i)=>
+          `(0, ${fk_id}, ${e}, ${column_ids_2[i]}`
+          ).join(",");
+        // make insertions
+        con.query(`INSERT INTO \`foreign keys\`
+        (id, foreign_key_id, column1_id, column2.id)
+        VALUES
+        ${values_to_insert};
+        `, callback);
+      case 6:
+        return; // that's all, values added
+      }
     }
+      
   }
+
+  // making initial callback
+  callback();
 }
 
 // checks if such Foreign Key already exists in the database.
 function FKExist(column_ids_1, column_ids_2, callback) {
   let L = Math.min(column_ids_1.length, column_ids_2.length);
   if (L == 0) {
-    callback(false);
+    callback(null, false);
     return;
   }
-  callback(false);
+  callback(null, false);
   return; // let's assume it's always false :D
   
   // algorithm:
