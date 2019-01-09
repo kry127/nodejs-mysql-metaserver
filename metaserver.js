@@ -211,8 +211,6 @@ function FKExist(column_ids_1, column_ids_2, callback) {
     callback(null, false);
     return;
   }
-  callback(null, false);
-  return; // let's assume it's always false :D
   
   // algorithm:
   //  1. For every pair (column_id_1i, column_id_2i) get list of FK id's
@@ -228,16 +226,16 @@ function FKExist(column_ids_1, column_ids_2, callback) {
   ]
   */
 
+  /*
   for (let k = 1; k < L; k++) {
-      /*
       init_list = [
         SELECT foreign_key_id
         FROM `foreign keys`
         WHERE column1_id = ${column_ids_1[k]} AND column2_id = ${column_ids_2[k]}
         AND foreign_key_id in [${init_list.join(",")]}
       ]
-      */
   }
+  */
 
   /*
     SELECT foreign_key_id, COUNT(*) as cnt
@@ -246,4 +244,54 @@ function FKExist(column_ids_1, column_ids_2, callback) {
     HAVING cnt = ${L}
   */
   // return true if last query is not empty
+
+  // implement using callback async function
+  var fk_list = [];
+  var k = 0;
+  var state = 0;
+  function cb(err, result) {
+    if (err) {
+      callback(err, null); //an error occured, should be processed in upstream
+    }
+    switch(state) {
+      case 0:
+        // create initial query for the first pair
+        con.query(`
+          SELECT \`foreign_key_id\`
+          FROM \`foreign keys\`
+          WHERE column1_id = ${column_ids_1[0]} AND column2_id = ${column_ids_2[0]}
+        `, cb);
+        state = 1; // next state is for processing query
+        break;
+      case 1:
+        fk_list = result.map(row=>row.foreign_key_id);
+        k++; // next pair
+        if (k < L) {
+          // chaining array processing for next pairs
+          con.query(`
+            SELECT \`foreign_key_id\`
+            FROM \`foreign keys\`
+            WHERE column1_id = ${column_ids_1[k]} AND column2_id = ${column_ids_2[k]}
+            AND foreign_key_id in [${fk_list.join(",")}]
+          `, cb);
+          // no state change needed for this operation
+          break; // call again after callback
+        }
+        // if all pairs have been considered
+        // query for the FK's that actually of size L
+        con.query(`
+        SELECT foreign_key_id, COUNT(*) as cnt
+        FROM \`foreign keys\`
+        WHERE foreign_key_id in [${init_list.join(",")}]
+        HAVING cnt = ${L}
+      `, cb);
+        state = 2; // fall through: next state is for processing query
+      case 2: 
+        // check if the result is not empty, call the callback function with result
+        callback (null, result.length > 0);
+        break;
+    }
+
+    cb(); // initiate the phases
+  }
 }
