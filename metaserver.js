@@ -8,6 +8,23 @@
  click safely: https://www.binarytides.com/list-foreign-keys-in-mysql/+&cd=3&hl=en&ct=clnk&gl=ru
 */
 
+
+module.exports = {
+  // connection
+  connect: connect,
+  disconnect: disconnect,
+  // addition
+  addHost: addHost,
+  addDatabase: addDatabase,
+  addTable: addTable,
+  addColumn: addColumn,
+  addFK: addFK,
+  // check
+  checkFK: checkFK,
+  // testing
+  test: test
+}
+
 var mysql = require('mysql');
 
 var metadata_credentials = {
@@ -62,9 +79,9 @@ function addHost(data, callback) {
             return callback(null, result);
         }
         console.error(`Error adding database ${data.host} to the metadata server.`)
-        if (typeof callback === "function")
-           return callback(err, result);
       }
+      if (typeof callback === "function")
+         return callback(err, result);
     });
 }
 
@@ -83,9 +100,9 @@ function addDatabase(data, callback) {
             return callback(null, result);
         }
         console.error(`Error adding database ${data.host}.${data.database} to the metadata server.`)
-        if (typeof callback === "function")
-           return callback(err, result);
       }
+      if (typeof callback === "function")
+         return callback(err, result);
     });
 }
 
@@ -108,9 +125,9 @@ function addTable(data, callback) {
             return callback(null, result);
         }
         console.error(`Error adding database ${data.host}.${data.database}.${data.table} to the metadata server.`)
-        if (typeof callback === "function")
-           return callback(err, result);
       }
+      if (typeof callback === "function")
+        return callback(err, result);
     });
 }
 
@@ -135,9 +152,10 @@ function addColumn(data, callback) {
             return callback(null, result);
         }
         console.error(`Error adding column ${data.host}.${data.database}.${data.table}.${data.column} to the metadata server.`)
-        if (typeof callback === "function")
-          return callback(err, result);
+
       }
+      if (typeof callback === "function")
+        return callback(err, result);
     });
 }
 
@@ -356,22 +374,6 @@ function checkFK(column_ids_1, column_ids_2, callback) {
   cb(); // initiate the phases
 }
 
-module.exports = {
-  // connection
-  connect: connect,
-  disconnect: disconnect,
-  // addition
-  addHost: addHost,
-  addDatabase: addDatabase,
-  addTable: addTable,
-  addColumn: addColumn,
-  addFK: addFK,
-  // check
-  checkFK: checkFK,
-  // testing
-  test: test
-}
-
 function test() {
   connect(function(err, data) {
     // define stuff
@@ -402,15 +404,15 @@ function test() {
         case 7: addDatabase({host:H2, database: DB1}, cb); break;
         case 8: addDatabase({host:H1, database: DB2}, cb); break; // add again for lulz
         // add some tables (2*2*2=8)
-        case 9: addDatabase({host:H1, database: DB1, table: T1}, cb); break;
-        case 10: addDatabase({host:H1, database: DB1, table: T2}, cb); break;
-        case 11: addDatabase({host:H1, database: DB2, table: T2}, cb); break;
-        case 12: addDatabase({host:H1, database: DB2, table: T1}, cb); break;
-        case 13: addDatabase({host:H2, database: DB2, table: T1}, cb); break;
-        case 14: addDatabase({host:H2, database: DB2, table: T2}, cb); break;
-        case 15: addDatabase({host:H2, database: DB1, table: T2}, cb); break;
-        case 16: addDatabase({host:H2, database: DB1, table: T1}, cb); break;
-        case 17: addDatabase({host:H2, database: DB2, table: T2}, cb); break; // add again for lulz
+        case 9: addTable({host:H1, database: DB1, table: T1}, cb); break;
+        case 10: addTable({host:H1, database: DB1, table: T2}, cb); break;
+        case 11: addTable({host:H1, database: DB2, table: T2}, cb); break;
+        case 12: addTable({host:H1, database: DB2, table: T1}, cb); break;
+        case 13: addTable({host:H2, database: DB2, table: T1}, cb); break;
+        case 14: addTable({host:H2, database: DB2, table: T2}, cb); break;
+        case 15: addTable({host:H2, database: DB1, table: T2}, cb); break;
+        case 16: addTable({host:H2, database: DB1, table: T1}, cb); break;
+        case 17: addTable({host:H2, database: DB2, table: T2}, cb); break; // add again for lulz
         // add some columns (2*2*2*2=16)
         case 18: addColumn({host:H1, database: DB1, table: T1, column: C1}, cb); break;
         case 19: addColumn({host:H1, database: DB1, table: T1, column: C2}, cb); break;
@@ -481,12 +483,16 @@ function test() {
         // try to add it again for lulz
         case 45:
         addFK({host: H1, database: DB1, table: T1, columns:[C1, C2]}
-          ,{host: H1, database: DB1, table: T1, columns:[C2, C1]}, cb); // don't make any sense
+          ,{host: H1, database: DB1, table: T1, columns:[C2, C1]}, cb); // don't make any sense too
         break;
-
-          
+        // protection from the idiot: duplicate pair twice
+        case 46:
+        addFK({host: H1, database: DB2, table: T2, columns:[C1, C1]}
+          ,{host: H2, database: DB1, table: T1, columns:[C2, C2]}, cb);
+        break;     
       }
       // that's all for tests
     }
+    cb(); // launch the chain!
   });
 }
