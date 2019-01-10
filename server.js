@@ -76,22 +76,23 @@ function session(credential, db, table) {
   
   let qse = Object.freeze( {
     connection: 0,
-    add_host: 1,
-    use_schema: 2,
-    get_schemas: 3,
-    add_schemas: 4,
-    get_tables_prep: 5,
-    get_tables: 6,
-    add_tables: 7,
-    get_columns_prep: 8,
-    get_columns: 9,
-    add_columns: 10,
-    get_fk_def_prep: 11,
-    get_fk_def: 12,
-    get_fk_prep: 13,
-    get_fk: 14,
-    add_fk: 15,
-    cycle_analyze: 16
+    connected: 1,
+    add_host: 2,
+    use_schema: 3,
+    get_schemas: 4,
+    add_schemas: 5,
+    get_tables_prep: 6,
+    get_tables: 7,
+    add_tables: 8,
+    get_columns_prep: 9,
+    get_columns: 10,
+    add_columns: 11,
+    get_fk_def_prep: 12,
+    get_fk_def: 13,
+    get_fk_prep: 14,
+    get_fk: 15,
+    add_fk: 16,
+    cycle_analyze: 17
   })
   var query_state = qse.connection;
   /* the idea of variables "schemas", "tables" and "columns":
@@ -121,18 +122,16 @@ function session(credential, db, table) {
     }
     switch (query_state) {
     case qse.connection: //connection
-      console.log("Connected!");
+      console.log("Connected to specified host! Connecting to metadata server...");
       // try to connect to metadata server
-      try {
-        metasrv.connect();
-      } catch (e) {
-        console.log(`Cannot connect to metadata server:`)
-        console.error(e);
-        return;
-      }
+      metasrv.connect(query_state_machine_callback);
+      query_state = qse.connected;
+      break;
+    case qse.connected:
+      console.log("Connected!")
       // host can be added here
       metasrv.addHost(credential, query_state_machine_callback)
-      state=qse.add_host
+      query_state=qse.add_host
       break;
     case qse.add_host: // when host added -- continue
       // use information schema DB
@@ -164,7 +163,7 @@ function session(credential, db, table) {
     case qse.add_schemas:
       // here we can add each element of schemas.arr to metadata database
       metasrv.addDatabase({host: credential.host, database: schemas.current()}, query_state_machine_callback)
-      state=qse.get_tables_prep
+      query_state=qse.get_tables_prep
       break;
     case qse.get_tables_prep: // when schema added -- continue
 
@@ -194,7 +193,7 @@ function session(credential, db, table) {
         {host: credential.host, database: schemas.current(), table: tables.current()},
         query_state_machine_callback
       )
-      state=qse.get_columns_prep
+      query_state=qse.get_columns_prep
       break;
     case qse.get_columns_prep: // when table added -- continue
       query_state = qse.get_columns; // next step is aquiring all columns
@@ -225,7 +224,7 @@ function session(credential, db, table) {
     case qse.add_columns:
       // here we can add each element of columns.arr to metadata database
       metasrv.addColumn(columns.current(), query_state_machine_callback)
-      query_state = qse.get_fk_prep
+      query_state = qse.get_fk_def_prep
       break;
     case qse.get_fk_def_prep: // when column added -- continue
       // there should be queries for key constraints for EACH column
@@ -235,11 +234,11 @@ function session(credential, db, table) {
       select distinct
       -- defines fk: constraint_name + table_schema
       constraint_name,
-      table_schema,
+      table_schema
       from
           information_schema.key_column_usage
       where
-          referenced_table_name is not null;
+          referenced_table_name is not null
       and 
       (
             table_schema = '${col.database}'
@@ -249,22 +248,29 @@ function session(credential, db, table) {
             referenced_table_schema = '${col.database}'
         AND referenced_table_name   = '${col.table}'
         AND referenced_column_name  = '${col.column}'
-      )
+      );
       `
         , query_state_machine_callback);
       break;
     case qse.get_fk_def:
+      if (result.length == 0) {
+        query_state = qse.cycle_analyze; // nothing to do here
+        query_state_machine_callback(); // call again
+        break;
+      }
       // here we've got all foreign key definitions, now for each we need full set of keys
       fk_defs.index = 0;
       fk_defs.arr = result.map(e=>{
-        e.constraint_name,
-        e.table_schema
+        return {
+          constraint_name: e.constraint_name,
+          table_schema: e.table_schema
+        }
       });
       query_state = qse.get_fk_prep;
     case qse.get_fk_prep:
       // then for each foreign key definition retrieve full connection
       var fk_def = fk_defs.current();
-      query_state = qse.get_fk_def;
+      query_state = qse.get_fk;
       con.query(`
       select
         table_schema, table_name, column_name,
@@ -272,9 +278,9 @@ function session(credential, db, table) {
       from
           information_schema.key_column_usage
       where
-          referenced_table_name is not null;
+          referenced_table_name is not null
       and constraint_name = '${fk_def.constraint_name}'
-      and table_schema = '${fk_def.table_schema}'
+      and table_schema = '${fk_def.table_schema}';
       `
         , query_state_machine_callback);
       break;
@@ -291,11 +297,13 @@ function session(credential, db, table) {
         console.error(`Error: dispersed foreign key ${connection.host}.${schemas.current()}.${fk_def.constraint_name}.`)
         console.error("The key contain multiple pairs from different tables, schemas and database, check information_schema.")
         query_state = qse.cycle_analyze; // ignore error and continue key iteration anyway
+        query_state_machine_callback(); // call again
         break;
       }
       if (result.length == 0) {
         console.error(`Error: foreign key ${connection.host}.${schemas.current()}.${fk_def.constraint_name} is empty.`)
         query_state = qse.cycle_analyze; // ignore error and continue key iteration anyway
+        query_state_machine_callback(); // call again
         break;
       }
       // if all good, then we can add FK to metadata database
@@ -317,7 +325,7 @@ function session(credential, db, table) {
       break;
     case qse.add_fk:
       // well, if query ok, we actually need to analyze next keys, so... fall through
-      state = qse.cycle_analyze
+      query_state = qse.cycle_analyze
     case qse.cycle_analyze:
       // reverse check
       if (fk_defs.arr.length > fk_defs.index + 1) {
@@ -356,5 +364,3 @@ function session(credential, db, table) {
   con.connect(query_state_machine_callback);
   
 }
-
-//session(credentials[1]);

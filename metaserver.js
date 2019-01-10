@@ -45,12 +45,14 @@ function connect(callback) {
   // connect
   con.connect(function(err, data) {
     if (err) {
-      throw "Critical error: cannot establish connection with metadata server.\n" + err;
+      console.error("Critical error: cannot establish connection with metadata server.")
+      if (typeof callback === "function")
+        callback(err, data);
     }
     // automatically  use database
     con.query("USE metadata;", function(err, data) {
       if (err) {
-        throw "Critical error: cannot switch to metadata schema.\n" + err;
+        console.error("Critical error: cannot switch to metadata schema.\n")
       }
       if (typeof callback === "function")
         callback(err, data);
@@ -204,6 +206,10 @@ function addFK(column_group1, column_group2, callback) {
         `, cb);
         return;
       case 1:
+        if (result.length == 0) {
+          console.error(`No columns found yet: ${column_group1.host}.${column_group1.database}.${column_group1.column}`)
+          return callback(null, []);
+        }
         column_ids_1.push(result[0].id);
         ids_1_i++;
         if (ids_1_i < column_group1.columns.length) {
@@ -229,6 +235,10 @@ function addFK(column_group1, column_group2, callback) {
         `, cb);
         return;
       case 3:
+        if (result.length == 0) {
+          console.error(`No columns found yet: ${column_group2.host}.${column_group2.database}.${column_group2.column}`)
+          return callback(null, []);
+        }
         column_ids_2.push(result[0].id);
         ids_2_i++;
         if (ids_2_i < column_group2.columns.length) {
