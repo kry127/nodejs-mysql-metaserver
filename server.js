@@ -70,22 +70,31 @@ rl.on('line', (input) => {
   rl.prompt();
 });
 
-
+// this function begins retrieval metadata from server
 function session(credential, db, table) {
   var con = mysql.createConnection(credential);
   
   let qse = Object.freeze( {
     connection: 0,
-    use_schema: 1,
-    get_schemas: 2,
-    get_tables_prep: 3,
-    get_tables: 4,
-    get_columns_prep: 5,
-    get_columns: 6,
-    cycle_analyze: 7
+    add_host: 1,
+    use_schema: 2,
+    get_schemas: 3,
+    add_schemas: 4,
+    get_tables_prep: 5,
+    get_tables: 6,
+    add_tables: 7,
+    get_columns_prep: 8,
+    get_columns: 9,
+    add_columns: 10,
+    get_fk_def_prep: 11,
+    get_fk_def: 12,
+    get_fk_prep: 13,
+    get_fk: 14,
+    add_fk: 15,
+    cycle_analyze: 16
   })
   var query_state = qse.connection;
-  /* the idea of variables "schemas" and "tables":
+  /* the idea of variables "schemas", "tables" and "columns":
    * the function query_state_machine_callback will be set as universal callback for every
    * session query results. This includes querying for tables and for fields.
    * So, the idea is: modified state machine, that analyses upcoming tables sequentially.
@@ -93,20 +102,18 @@ function session(credential, db, table) {
    * state is restoring to get_schemas or get_tables and automata starts over again.
    * The strategy is similar to LR-analyzer with stack machine.
    */
-  var schemas = {
-    arr: [],
-    index: 0,
-    current: function() {
-      return this.arr[this.index];
+  function Iterator() {
+    this.arr = [];
+    this.index = 0;
+    this.current = function() {
+      return this.arr[this.index]
     }
-  };
-  var tables = {
-    arr: [],
-    index: 0,
-    current: function() {
-      return this.arr[this.index];
-    }
-  };
+  }
+  var schemas = new Iterator();
+  var tables = new Iterator();
+  var columns = new Iterator();
+  var fk_defs = new Iterator();
+
   function query_state_machine_callback(err, result) {
     if (err) {
       console.error(err); // that's all
@@ -115,7 +122,19 @@ function session(credential, db, table) {
     switch (query_state) {
     case qse.connection: //connection
       console.log("Connected!");
-      
+      // try to connect to metadata server
+      try {
+        metasrv.connect();
+      } catch (e) {
+        console.log(`Cannot connect to metadata server:`)
+        console.error(e);
+        return;
+      }
+      // host can be added here
+      metasrv.addHost(credential, query_state_machine_callback)
+      state=qse.add_host
+      break;
+    case qse.add_host: // when host added -- continue
       // use information schema DB
       query_state = qse.use_schema;
       con.query("USE information_schema;", query_state_machine_callback);
@@ -141,8 +160,15 @@ function session(credential, db, table) {
         // filter with tabu schemas
         schemas.arr = schemas.arr.filter(scheme=>tabu.indexOf(scheme) == -1)
       }
-    case qse.get_tables_prep:
-    query_state = qse.get_tables;
+    
+    case qse.add_schemas:
+      // here we can add each element of schemas.arr to metadata database
+      metasrv.addDatabase({host: credential.host, database: schemas.current()}, query_state_machine_callback)
+      state=qse.get_tables_prep
+      break;
+    case qse.get_tables_prep: // when schema added -- continue
+
+      query_state = qse.get_tables; // next step -- form query for getting tables
       con.query(`SELECT * FROM TABLES WHERE TABLE_SCHEMA='${schemas.current()}';`, query_state_machine_callback);
       break;
     case qse.get_tables:
@@ -162,38 +188,159 @@ function session(credential, db, table) {
           tables.arr=[table] // left only table to analyze
         }
       }
-    case qse.get_columns_prep:
-    query_state = qse.get_columns;
+    case qse.add_tables:
+      // here we can add each element of tables.arr to metadata database
+      metasrv.addTable(
+        {host: credential.host, database: schemas.current(), table: tables.current()},
+        query_state_machine_callback
+      )
+      state=qse.get_columns_prep
+      break;
+    case qse.get_columns_prep: // when table added -- continue
+      query_state = qse.get_columns; // next step is aquiring all columns
       con.query(`SELECT * FROM COLUMNS WHERE TABLE_SCHEMA='${schemas.current()}'
                 AND TABLE_NAME='${tables.current()}';`
         , query_state_machine_callback);
       break;
     case qse.get_columns:
-      var cols_info = result.map(e=>
+      columns.index = 0;
+      columns.arr = result.map(e=>
         {
           return {
+                // full qualifier
+                host: credential.host,
+            database: schemas.current(),
+               table: tables.current(),
+                // column itself
               column: e.COLUMN_NAME,
             nullable: e.IS_NULLABLE,
                 type: e.DATA_TYPE,
              default: e.COLUMN_DEFAULT
           }
         });
-      var res = cols_info.map(e=>e.column).join()
+      var res = columns.arr.map(e=>e.column).join()
       console.log("Columns: " + res);
-      // there should be queries for key constraints
 
-      query_state = qse.cycle_analyze
+      query_state = qse.add_columns
+    case qse.add_columns:
+      // here we can add each element of columns.arr to metadata database
+      metasrv.addColumn(columns.current(), query_state_machine_callback)
+      query_state = qse.get_fk_prep
+      break;
+    case qse.get_fk_def_prep: // when column added -- continue
+      // there should be queries for key constraints for EACH column
+      var col = columns.current();
+      query_state = qse.get_fk_def;
+      con.query(`
+      select distinct
+      -- defines fk: constraint_name + table_schema
+      constraint_name,
+      table_schema,
+      from
+          information_schema.key_column_usage
+      where
+          referenced_table_name is not null;
+      and 
+      (
+            table_schema = '${col.database}'
+        AND table_name   = '${col.table}'
+        AND column_name  = '${col.column}'
+        OR
+            referenced_table_schema = '${col.database}'
+        AND referenced_table_name   = '${col.table}'
+        AND referenced_column_name  = '${col.column}'
+      )
+      `
+        , query_state_machine_callback);
+      break;
+    case qse.get_fk_def:
+      // here we've got all foreign key definitions, now for each we need full set of keys
+      fk_defs.index = 0;
+      fk_defs.arr = result.map(e=>{
+        e.constraint_name,
+        e.table_schema
+      });
+      query_state = qse.get_fk_prep;
+    case qse.get_fk_prep:
+      // then for each foreign key definition retrieve full connection
+      var fk_def = fk_defs.current();
+      query_state = qse.get_fk_def;
+      con.query(`
+      select
+        table_schema, table_name, column_name,
+        referenced_table_schema, referenced_table_name, referenced_column_name
+      from
+          information_schema.key_column_usage
+      where
+          referenced_table_name is not null;
+      and constraint_name = '${fk_def.constraint_name}'
+      and table_schema = '${fk_def.table_schema}'
+      `
+        , query_state_machine_callback);
+      break;
+    case qse.get_fk:
+      // getting result and checking, that ALL table_schema, table_name, referenced_table_schema and
+      // referenced_column_name has exact same value (not in normal form 2)
+      var good = result.every((v,i,a)=>
+        v.table_schema == a[0].table_schema
+        && v.table_name == a[0].table_name
+        && v.referenced_table_schema == a[0].referenced_table_schema
+        && v.referenced_table_name == a[0].referenced_table_name
+      )
+      if (!good) {
+        console.error(`Error: dispersed foreign key ${connection.host}.${schemas.current()}.${fk_def.constraint_name}.`)
+        console.error("The key contain multiple pairs from different tables, schemas and database, check information_schema.")
+        query_state = qse.cycle_analyze; // ignore error and continue key iteration anyway
+        break;
+      }
+      if (result.length == 0) {
+        console.error(`Error: foreign key ${connection.host}.${schemas.current()}.${fk_def.constraint_name} is empty.`)
+        query_state = qse.cycle_analyze; // ignore error and continue key iteration anyway
+        break;
+      }
+      // if all good, then we can add FK to metadata database
+      var column_group_1 = {
+        host: credential.host,
+        database: result[0].table_schema,
+        table: result[0].table_name,
+        columns: result.map(row=>row.column_name)
+      }
+      var column_group_2 = {
+        host: credential.host,
+        database: result[0].referenced_table_schema,
+        table: result[0].referenced_table_name,
+        columns: result.map(row=>row.referenced_column_name)
+      }
+      // then, finally, can add to metadata database
+      metasrv.addFK(column_group_1, column_group_2, query_state_machine_callback);
+      query_state = qse.add_fk; // don't forget next state
+      break;
+    case qse.add_fk:
+      // well, if query ok, we actually need to analyze next keys, so... fall through
+      state = qse.cycle_analyze
     case qse.cycle_analyze:
       // reverse check
+      if (fk_defs.arr.length > fk_defs.index + 1) {
+        fk_defs.index++;
+        query_state = qse.get_fk_prep; // get ready to select constraints of each selected column
+        query_state_machine_callback(); //cycling
+        break;
+      }
+      if (columns.arr.length > columns.index + 1) {
+        columns.index++;
+        query_state = qse.add_columns; // get ready to select constraints of each selected column
+        query_state_machine_callback(); //cycling
+        break;
+      }
       if (tables.arr.length > tables.index + 1) {
         tables.index++;
-        query_state = qse.get_columns_prep; // get ready to select colums of next tables
+        query_state = qse.add_tables; // get ready to select colums of next tables
         query_state_machine_callback(); //cycling
         break;
       }
       if (schemas.arr.length > schemas.index + 1) {
         schemas.index++;
-        query_state = qse.get_tables_prep; // get ready to select tables of next db
+        query_state = qse.add_schemas; // get ready to select tables of next db
         query_state_machine_callback(); //cycling
         break;
       }
