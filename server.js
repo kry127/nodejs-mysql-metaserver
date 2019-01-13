@@ -34,7 +34,9 @@ var tabu = ["information_schema", "sys", "performance_schema"]
 
 rl.prompt()
 rl.on('line', (input) => {
-  let _str_get_help = "  get <server>:[user]:[password]:[port][/db[/table]]";
+  let _str_get_help = `
+  get <server>:[user]:[password]:[port][/db[/table]]
+  select <column1> [,<column2>[,...[,<columnn>]]] from <table1> join <table2> on <columni>=<columnj>`;
 
   var inp_arr = input.split(" ")
 
