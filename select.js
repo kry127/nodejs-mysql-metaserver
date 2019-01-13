@@ -73,7 +73,7 @@ function lexer(input) {
                 i.next() // lookin at next symbol immediately
                 j = i.clone()
                 state = 2;
-            } else if (".=;*".indexOf(ichr) != -1) { // single lexems
+            } else if (".,=;*".indexOf(ichr) != -1) { // single lexems
                 j = i.clone();
                 j.next();
                 addLexem();
@@ -112,7 +112,7 @@ function lexer(input) {
     return lex_arr;
 }
 
-var sampleSQL = "SELECT * \nFROM STUDENTS \nwhere `lol`=`kek cheburek`"
+var sampleSQL = "SELECT *,ID \nFROM STUDENTS \nwhere `lol`=`kek cheburek`"
 var parsedSQL = lexer(sampleSQL);
 
 var nop =  0;
