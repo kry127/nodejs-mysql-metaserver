@@ -168,6 +168,7 @@ class node_select {
         this.column_list = [], // array of node_column_raw  or node_column
         this.table = table, // link to node_table
         this.joins = [] // array of node_join or node_join_raw in refined style
+        this.sql = null // sql statement of SELECT
     }
 }
 // ON statement node (raw and proper)
@@ -205,10 +206,10 @@ function ast(sql)
     var lexems = lexer(sql); // we incorporate sql parser in AST parser. Why not?
 
     class parse_error {
-        constructor (msg, lex_id, end_lex_id) {
+        constructor (msg, lexem_from, lexem_end) {
             this.msg = msg,
-            this.lex_id = lex_id,
-            this.end_lex_id = end_lex_id
+            this.lexem_from = lexem_from,
+            this.lexem_end = lexem_end
         }
     }
 
@@ -222,7 +223,7 @@ function ast(sql)
         }
         let end_lex = lexems[end_lex_id]
          // rest of SQL statement
-        let rest_of_sql = lex ? sql.substr(lex.position, end_lex.end_position) : ""
+        let rest_of_sql = lex ? sql.substr(lex.position, end_lex.end_position - lex.position) : ""
 
         let err_mesg = `\
 You have an SQL syntax error near '${lex?lex.lexem:"EOF"}'. \
@@ -451,8 +452,7 @@ OurSQL: ${rest_of_sql}`
         if (lexems[i].lexem != ";")
             throwError(i, "Expected end of SELECT statement")
 
-        if (i < lexems.length - 1) // stay either on last ";", or on next statement
-            i = next(i);
+        i++ // WARNING: can point beyond lexems, this is intentional
         return {
             node: node,
             index: i
@@ -464,23 +464,36 @@ OurSQL: ${rest_of_sql}`
     function parseSequence(i) {
         var seq = []
         while (i < lexems.length) {
+            var j = i
             try {
                 if (lexems[i].lexem.toUpperCase() === keywords.SELECT) {
                     var node_select = parseSelect(next(i));
-                    seq.push(node_select.node)
                     i = node_select.index
+                    // copy SQL statement to node_select
+                    node_select.node.sql = {
+                        lexem_begin: j,
+                        lexem_end: i-1,
+                        lexems: lexems.slice(j, i),
+                        str: sql.substr(lexems[j].position, lexems[i-1].end_position - lexems[j].position)
+                    }
+                    seq.push(node_select.node)
+                    
                 } else if (lexems[i].lexem === ";"){
-                    if (i < lexems.length - 1)
-                        i = next(i) // nop
-                    else break; // end of recognition
+                    i++ // nop
                 } else {
                     throwError(i, "Keyword expected")
                 }
             } catch (error) {
                 if (error instanceof parse_error) {
+                    error.sql = {
+                        lexem_begin: j,
+                        lexem_end: error.lexem_end,
+                        lexems: lexems.slice(j,error.lexem_end+1),
+                        str: sql.substr(lexems[j].position, lexems[error.lexem_end].end_position-lexems[j].position),
+                    }
                     // catch only parsing errors
-                    console.error(error.msg)
-                    i = error.end_lex_id + 1
+                    seq.push(error) // let user know about errors
+                    i = error.lexem_end + 1
                 } else throw error
             }
         }
@@ -491,12 +504,13 @@ OurSQL: ${rest_of_sql}`
 }
 
 // Semantic analysis
+//
 //  1. for table in FROM statement:
-//   1.1. check existence
+//-> 1.1. check existence
 //     it means in AST presented context host.database.table and table record presented
-//   1.2. get all columns of table, store them in node if needed
+//-> 1.2. get all columns of table, store them in node if needed
 //  2. for every JOIN statement:
-//   2.1. do steps 1.1 and 1.2 for table in JOIN statement
+//-> 2.1. do steps 1.1 and 1.2 for table in JOIN statement
 //   2.2. for statement ON of JOIN:
 //    2.2.1. check, if left column belongs to JOIN statement
 //           if not, get array of tables that column can belong to (from upper tables)
@@ -508,12 +522,12 @@ OurSQL: ${rest_of_sql}`
 //           if no such column presented, error should be rised
 //    2.2.5. place ref_table attribute of the JOIN statement to the value of table,
 //           that refers right column
-//   2.3. for statement AND of JOIN:
+//   2.3. for each statement AND of JOIN:
 //    2.3.1 do steps 2.2
 //    2.3.2 check that right binding table stays the same (equals ref_table)
 //          otherwize error should be rised
 //   2.4. restructure JOIN node: convert node_column_raw to node_column (if needed)
-//   2.5. check, that defined foreign key exists in metadata server
+//-> 2.5. check, that defined foreign key exists in metadata server
 //  3. for columns of SELECT statement check presense of all listed columns in tables of statements
 //     FROM and JOIN.
 //     Exception: column '*' with no context.
@@ -524,6 +538,30 @@ OurSQL: ${rest_of_sql}`
 
 // the question is: how to combine callback pattern with semantic parser pattern ???
 
+// make 3 independent parser phases, that implements algorithm:
+// 1. check existence of all presented tables and retrieve their columns (BFS): 1, 2.1
+// 2. make all semantic analysis: 2.2, 2.3, 2.4, 3
+// 3. check foreign key existence: 2.5
+// pitifully, there should be callback chaining, because steps 1 and 3 depends on async MySQL
+// so 1 and 3 would be nonblocking and should accept callback result
+
+function semantic(sql, callback, environ) {
+    // let's incorporate AST builder in semantic builder
+    var ast_array = ast(sql);
+    // ast_array contains node_select and parse_error
+    // both of them contain object "sql", which has the original SQL, lexems of the query
+    // so semantic parser has access to source code
+    
+    // through environ we will look at defined host and schema
+    // maybe store some other syncing information, like state machine
+    if (typeof environ === "undefined") {
+        environ = {}
+    }
+    function phase1() {
+        
+    }
+}
+
 
 // tests
 var sampleSQL = "SELECT STUDENT.*,STUDENT.ID \nFROM STUDENT \nwhere `lol`=`kek cheburek`"
@@ -531,7 +569,7 @@ var parsedSQL = ast(sampleSQL);
 
 var sql1 = "SELECT * FROM USERS;"
 var sql2 = "SELECT A.a, B.b FROM A JOIN M ON M.a = A.a AND M.b = B.b JOIN K ON K.m = M.m;"
-var sql3 = "SELECT A FROM B; SELECT B FROM C; select C from `a s d f g ; e $`;"
+var sql3 = "SELECT A FROM B; SELECT B ON FROM C; select C from `a s d f g ; e $`;"
 
 var psql1 = ast(sql1);
 var psql2 = ast(sql2);
