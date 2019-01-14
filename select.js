@@ -1,6 +1,6 @@
 // select statement parser BNF notation:
 /*
-<select>::= SELECT <column list> FROM <table> {JOIN <table> ON <column>=<column>};
+<select>::= SELECT <column list> FROM <table> {JOIN <table> ON <column>=<column> {AND <column>=<column>}};
 <column list> ::= <general column> {, <general column>}
 <general column> ::= <column> | <table>.* | *
 <column> ::= [<table>.]<name>
@@ -112,7 +112,89 @@ function lexer(input) {
     return lex_arr;
 }
 
-var sampleSQL = "SELECT *,ID \nFROM STUDENTS \nwhere `lol`=`kek cheburek`"
+// after lexer build it is time for abstract syntax tree
+// here we check keyword ordering, correctness of table and column definition
+
+// column raw definition
+class node_column_raw {
+    constructor(host, schema, table, column, alias) {
+        this.host = host,
+        this.schema =schema,
+        this.table = table,
+        this.column = column,
+        this.alias = alias// for future :)
+    }
+}
+// table proper definition
+// host and schema are strings with no link to actual entities of the tree
+// because they are not needed for further structure in AST
+class node_table{
+    constructor (host, schema, name, alias) {
+        this.host = host, // simple string
+        this.schema = schema, // simple string
+        this.name = name,
+        this.alias = alias // for future :)
+    }
+}
+// column proper definition
+class node_column {
+    constructor(name, table, alias) {
+        this.name = name,
+        this.table = table, // link to node_table
+        this.alias  = alias
+    }
+}
+// SELECT statement node
+class node_select {
+    constructor(table) {
+        this.column_list = [], // array of node_column_raw 
+        this.table = table, // link to node_table
+        this.joins = [] // array of node_join
+    }
+}
+// JOIN statement node raw
+class node_join_raw{
+    constructor(table) {
+        this.table = table // link to node_table
+        this.on = []// array of node_on_raw
+    }
+}
+// ON statement node raw
+class node_on_raw {
+    constructor(left, right) {
+        this.left = left, // left node_column_raw
+        this.right = right // binds to right node_column_raw
+    }
+}
+// JOIN statement node proper
+class node_join {
+    constructor(table, ref_table) {
+        this.table = table // link to node_table
+        this.ref_table =ref_table // referenced table typeof node_table
+        this.on = []// array of node_on.
+        // this.on.left should link to this.table
+        // this.on.right should link to this.ref_table
+        // no other options are suggested by database
+    }
+}
+// ON statement node proper
+class node_on_raw {
+    constructor(left, right) {
+        this.left = left, // left node_column
+        this.right = right // right node_column
+    }
+}
+// merely different from node_on
+
+// parsing strategy is simple:
+//  - the root node is of SELECT type
+//  - when finding column definition, add node_column_raw() to the 
+function ast(lexems) {
+
+}
+
+// tests
+var sampleSQL = "SELECT STUDENT.*,STUDENT.ID \nFROM STUDENT \nwhere `lol`=`kek cheburek`"
 var parsedSQL = lexer(sampleSQL);
 
 var nop =  0;
