@@ -15,12 +15,16 @@ module.exports = {
   disconnect: disconnect,
   // addition
   addHost: addHost,
-  addDatabase: addDatabase,
+  addSchema: addSchema,
   addTable: addTable,
   addColumn: addColumn,
   addFK: addFK,
   // check
+  checkTable: checkTable,
+  checkColumn: checkColumn,
   checkFK: checkFK,
+  // select
+  getTableColumns: getTableColumns,
   // testing
   test: test
 }
@@ -49,7 +53,7 @@ function connect(callback) {
       if (typeof callback === "function")
         callback(err, data);
     }
-    // automatically  use database
+    // automatically  use schema
     con.query("USE metadata;", function(err, data) {
       if (err) {
         console.error("Critical error: cannot switch to metadata schema.\n")
@@ -80,39 +84,39 @@ function addHost(data, callback) {
           if (typeof callback === "function")
             return callback(null, result);
         }
-        console.error(`Error adding database ${data.host} to the metadata server.`)
+        console.error(`Error adding schema ${data.host} to the metadata server.`)
       }
       if (typeof callback === "function")
          return callback(err, result);
     });
 }
 
-// data: {host, database}
-function addDatabase(data, callback) {
+// data: {host, schema}
+function addSchema(data, callback) {
   con.query(`INSERT INTO \`database\` VALUES (0,
     (
       SELECT id FROM host where host='${data.host}'
     )
-    , '${data.database}');`
+    , '${data.schema}');`
     , function (err, result) {
       if (err) {
         if (err.errno == 1062) {// 'code: ER_DUP_ENTRY
-          console.error(`Schema ${data.host}.${data.database} already exist`)
+          console.error(`Schema ${data.host}.${data.schema} already exist`)
           if (typeof callback === "function")
             return callback(null, result);
         }
-        console.error(`Error adding database ${data.host}.${data.database} to the metadata server.`)
+        console.error(`Error adding schema ${data.host}.${data.schema} to the metadata server.`)
       }
       if (typeof callback === "function")
          return callback(err, result);
     });
 }
 
-// data: {host, database, table}
+// data: {host, schema, table}
 function addTable(data, callback) {
   con.query(`INSERT INTO \`table\` VALUES (0, 
       (
-        SELECT id FROM \`database\` WHERE \`database\`='${data.database}' AND host_id=
+        SELECT id FROM \`database\` WHERE \`database\`='${data.schema}' AND host_id=
         (
           SELECT id FROM host where host='${data.host}'
         )
@@ -122,24 +126,24 @@ function addTable(data, callback) {
       if (err) {
         
         if (err.errno == 1062) {// 'code: ER_DUP_ENTRY
-          console.error(`Table ${data.host}.${data.database}.${data.table} already exist`)
+          console.error(`Table ${data.host}.${data.schema}.${data.table} already exist`)
           if (typeof callback === "function")
             return callback(null, result);
         }
-        console.error(`Error adding database ${data.host}.${data.database}.${data.table} to the metadata server.`)
+        console.error(`Error adding schema ${data.host}.${data.schema}.${data.table} to the metadata server.`)
       }
       if (typeof callback === "function")
         return callback(err, result);
     });
 }
 
-// data: {host, database, table, column, nullable, type, default}
+// data: {host, schema, table, column, nullable, type, default}
 function addColumn(data, callback) {
   con.query(`INSERT INTO \`column\` VALUES (0, 
       (
         SELECT id FROM \`table\` WHERE \`table\`='${data.table}' AND database_id=
         (
-          SELECT id FROM \`database\` WHERE \`database\`='${data.database}' AND host_id=
+          SELECT id FROM \`database\` WHERE \`database\`='${data.schema}' AND host_id=
           (
             SELECT id FROM host where host='${data.host}'
           )
@@ -149,11 +153,11 @@ function addColumn(data, callback) {
     , function (err, result) {
       if (err) {
         if (err.errno == 1062) {// 'code: ER_DUP_ENTRY
-          console.error(`Column ${data.host}.${data.database}.${data.table}.${data.column} already exist`)
+          console.error(`Column ${data.host}.${data.schema}.${data.table}.${data.column} already exist`)
           if (typeof callback === "function")
             return callback(null, result);
         }
-        console.error(`Error adding column ${data.host}.${data.database}.${data.table}.${data.column} to the metadata server.`)
+        console.error(`Error adding column ${data.host}.${data.schema}.${data.table}.${data.column} to the metadata server.`)
 
       }
       if (typeof callback === "function")
@@ -163,7 +167,7 @@ function addColumn(data, callback) {
 
 // for internally defined keys
 // bind columns1 to columns2 (columns2 should be PK)
-// column_group: {host, database, table, columns}
+// column_group: {host, schema, table, columns}
 // columns = [column, column, ..., column]
 // commonly, columns1 should be in table A, and columns2 should bein table B
 function addFK(column_group1, column_group2, callback) {
@@ -180,7 +184,7 @@ function addFK(column_group1, column_group2, callback) {
     if (err) {
       console.error(
         `Error adding foreign key: 
-        ${column_group1.host}.${column_group1.database}.${column_group1.table} -> ${column_group2.host}.${column_group2.database}.${column_group2.table}`
+        ${column_group1.host}.${column_group1.schema}.${column_group1.table} -> ${column_group2.host}.${column_group2.schema}.${column_group2.table}`
         );
         if (typeof callback === "function")
           return callback(err, result)
@@ -197,7 +201,7 @@ function addFK(column_group1, column_group2, callback) {
         (
           SELECT id FROM \`table\` WHERE \`table\`='${column_group1.table}' AND database_id=
           (
-            SELECT id FROM \`database\` WHERE \`database\`='${column_group1.database}' AND host_id=
+            SELECT id FROM \`database\` WHERE \`database\`='${column_group1.schema}' AND host_id=
             (
               SELECT id FROM host where host='${column_group1.host}'
             )
@@ -207,8 +211,9 @@ function addFK(column_group1, column_group2, callback) {
         return;
       case 1:
         if (result.length == 0) {
-          console.error(`No columns found yet: ${column_group1.host}.${column_group1.database}.${column_group1.column}`)
-          return callback(null, []);
+          console.error(`No columns found yet: ${column_group1.host}.${column_group1.schema}.${column_group1.column}`)
+          if (typeof callback === "function")
+            return callback(null, []);
         }
         column_ids_1.push(result[0].id);
         ids_1_i++;
@@ -226,7 +231,7 @@ function addFK(column_group1, column_group2, callback) {
         (
           SELECT id FROM \`table\` WHERE \`table\`='${column_group2.table}' AND database_id=
           (
-            SELECT id FROM \`database\` WHERE \`database\`='${column_group2.database}' AND host_id=
+            SELECT id FROM \`database\` WHERE \`database\`='${column_group2.schema}' AND host_id=
             (
               SELECT id FROM host where host='${column_group2.host}'
             )
@@ -236,8 +241,9 @@ function addFK(column_group1, column_group2, callback) {
         return;
       case 3:
         if (result.length == 0) {
-          console.error(`No columns found yet: ${column_group2.host}.${column_group2.database}.${column_group2.column}`)
-          return callback(null, []);
+          console.error(`No columns found yet: ${column_group2.host}.${column_group2.schema}.${column_group2.column}`)
+          if (typeof callback === "function")
+            return callback(null, []);
         }
         column_ids_2.push(result[0].id);
         ids_2_i++;
@@ -251,10 +257,10 @@ function addFK(column_group1, column_group2, callback) {
         return;
       case 4:
         if (result) {
-           // FK already presented in database
+           // FK already presented in schema
           console.error(
           "Foreign key: " + 
-          `${column_group1.host}.${column_group1.database}.${column_group1.table}.[${column_group1.columns.join(" ")}] -> ${column_group2.host}.${column_group2.database}.${column_group2.table}.[${column_group2.columns.join(" ")}]`
+          `${column_group1.host}.${column_group1.schema}.${column_group1.table}.[${column_group1.columns.join(" ")}] -> ${column_group2.host}.${column_group2.schema}.${column_group2.table}.[${column_group2.columns.join(" ")}]`
           +" already exist")
           if (typeof callback === "function")
             return callback(null, result)
@@ -289,11 +295,132 @@ function addFK(column_group1, column_group2, callback) {
   cb();
 }
 
-// checks if such Foreign Key already exists in the database.
+// check if table exists
+// data ::= {table, schema, host}
+function checkTable(data, callback) {
+  if (typeof data === "undefined" || !data || !data.host || !data.schema || !data.table) {
+    if (typeof callback === "function")
+      return callback(null, false);
+  }
+  
+  var state = 0;
+  function cb(err, result) {
+    if (err) {
+      if (typeof callback === "function")
+        callback(err, null); //an error occured, should be processed in upstream
+      return;
+    }
+    switch(state) {
+      case 0:
+        // create initial query for the first pair
+        con.query(`
+        SELECT id FROM \`table\` WHERE \`table\`='${data.table}' AND database_id=
+        (
+          SELECT id FROM \`database\` WHERE \`database\`='${data.schema}' AND host_id=
+          (
+            SELECT id FROM host where host='${data.host}'
+          )
+        )
+        `, cb);
+        state = 1; // next state is for processing query
+        break;
+      case 1:
+        if (typeof callback === "function")
+          return callback(null, result.length > 0);
+    }
+  }
+
+  cb();
+}
+
+// check if column exists
+// data ::= {column, table, schema, host}
+function checkColumn(data, callback) {
+  if (typeof data === "undefined" || !data || !data.host || !data.schema || !data.table || !data.column) {
+    if (typeof callback === "function")
+      return callback(null, false);
+  }
+  
+  var state = 0;
+  function cb(err, result) {
+    if (err) {
+      if (typeof callback === "function")
+        callback(err, null); //an error occured, should be processed in upstream
+      return;
+    }
+    switch(state) {
+      case 0:
+        // create initial query for the first pair
+        con.query(`
+        SELECT id FROM \`column\` WHERE \`column\` = '${data.column}' and table_id=
+        (
+          SELECT id FROM \`table\` WHERE \`table\`='${data.table}' AND database_id=
+          (
+            SELECT id FROM \`database\` WHERE \`database\`='${data.schema}' AND host_id=
+            (
+              SELECT id FROM host where host='${data.host}'
+            )
+          )
+        )
+        `, cb);
+        state = 1; // next state is for processing query
+        break;
+      case 1:
+        if (typeof callback === "function")
+          return callback(null, result.length > 0);
+    }
+  }
+
+  cb();
+}
+
+// get list of columns for the table
+// data ::= {table, schema, host}
+function getTableColumns(data, callback) {
+  if (typeof data === "undefined" || !data || !data.host || !data.schema || !data.table) {
+    if (typeof callback === "function")
+      return callback(null, false);
+  }
+  
+  var state = 0;
+  function cb(err, result) {
+    if (err) {
+      if (typeof callback === "function")
+        callback(err, null); //an error occured, should be processed in upstream
+      return;
+    }
+    switch(state) {
+      case 0:
+        // create initial query for the first pair
+        con.query(`
+        SELECT \`column\` FROM \`column\` WHERE table_id=
+        (
+          SELECT id FROM \`table\` WHERE \`table\`='${data.table}' AND database_id=
+          (
+            SELECT id FROM \`database\` WHERE \`database\`='${data.schema}' AND host_id=
+            (
+              SELECT id FROM host where host='${data.host}'
+            )
+          )
+        )
+        `, cb);
+        state = 1; // next state is for processing query
+        break;
+      case 1:
+        if (typeof callback === "function")
+          return callback(null, result.map(e=>e.column));
+    }
+  }
+
+  cb();
+}
+
+// checks if such Foreign Key already exists in schema.
 function checkFK(column_ids_1, column_ids_2, callback) {
   let L = Math.min(column_ids_1.length, column_ids_2.length);
   if (L == 0) {
-    callback(null, false);
+    if (typeof callback === "function")
+      callback(null, false);
     return;
   }
   
@@ -336,7 +463,8 @@ function checkFK(column_ids_1, column_ids_2, callback) {
   var state = 0;
   function cb(err, result) {
     if (err) {
-      callback(err, null); //an error occured, should be processed in upstream
+      if (typeof callback === "function")
+        callback(err, null); //an error occured, should be processed in upstream
       return;
     }
     switch(state) {
@@ -376,7 +504,8 @@ function checkFK(column_ids_1, column_ids_2, callback) {
         break;
       case 2: 
         // check if the result is not empty, call the callback function with result
-        callback (null, result.length > 0);
+        if (typeof callback === "function")
+          callback (null, result.length > 0);
         return;
     }
   }
@@ -407,98 +536,98 @@ function test() {
         case 1: addHost({host:H1}, cb); break;
         case 2: addHost({host:H2}, cb); break;
         case 3: addHost({host:H1}, cb); break; // add again for lulz
-        // add some databases (2*2=4)
-        case 4: addDatabase({host:H1, database: DB1}, cb); break;
-        case 5: addDatabase({host:H1, database: DB2}, cb); break;
-        case 6: addDatabase({host:H2, database: DB2}, cb); break;
-        case 7: addDatabase({host:H2, database: DB1}, cb); break;
-        case 8: addDatabase({host:H1, database: DB2}, cb); break; // add again for lulz
+        // add some schemas (2*2=4)
+        case 4: addSchema({host:H1, schema: DB1}, cb); break;
+        case 5: addSchema({host:H1, schema: DB2}, cb); break;
+        case 6: addSchema({host:H2, schema: DB2}, cb); break;
+        case 7: addSchema({host:H2, schema: DB1}, cb); break;
+        case 8: addSchema({host:H1, schema: DB2}, cb); break; // add again for lulz
         // add some tables (2*2*2=8)
-        case 9: addTable({host:H1, database: DB1, table: T1}, cb); break;
-        case 10: addTable({host:H1, database: DB1, table: T2}, cb); break;
-        case 11: addTable({host:H1, database: DB2, table: T2}, cb); break;
-        case 12: addTable({host:H1, database: DB2, table: T1}, cb); break;
-        case 13: addTable({host:H2, database: DB2, table: T1}, cb); break;
-        case 14: addTable({host:H2, database: DB2, table: T2}, cb); break;
-        case 15: addTable({host:H2, database: DB1, table: T2}, cb); break;
-        case 16: addTable({host:H2, database: DB1, table: T1}, cb); break;
-        case 17: addTable({host:H2, database: DB2, table: T2}, cb); break; // add again for lulz
+        case 9: addTable({host:H1, schema: DB1, table: T1}, cb); break;
+        case 10: addTable({host:H1, schema: DB1, table: T2}, cb); break;
+        case 11: addTable({host:H1, schema: DB2, table: T2}, cb); break;
+        case 12: addTable({host:H1, schema: DB2, table: T1}, cb); break;
+        case 13: addTable({host:H2, schema: DB2, table: T1}, cb); break;
+        case 14: addTable({host:H2, schema: DB2, table: T2}, cb); break;
+        case 15: addTable({host:H2, schema: DB1, table: T2}, cb); break;
+        case 16: addTable({host:H2, schema: DB1, table: T1}, cb); break;
+        case 17: addTable({host:H2, schema: DB2, table: T2}, cb); break; // add again for lulz
         // add some columns (2*2*2*2=16)
-        case 18: addColumn({host:H1, database: DB1, table: T1, column: C1}, cb); break;
-        case 19: addColumn({host:H1, database: DB1, table: T1, column: C2}, cb); break;
-        case 20: addColumn({host:H1, database: DB1, table: T2, column: C2}, cb); break;
-        case 21: addColumn({host:H1, database: DB1, table: T2, column: C1}, cb); break;
-        case 22: addColumn({host:H1, database: DB2, table: T2, column: C1}, cb); break;
-        case 23: addColumn({host:H1, database: DB2, table: T2, column: C2}, cb); break;
-        case 24: addColumn({host:H1, database: DB2, table: T1, column: C2}, cb); break;
-        case 25: addColumn({host:H1, database: DB2, table: T1, column: C1}, cb); break;
-        case 26: addColumn({host:H2, database: DB2, table: T1, column: C1}, cb); break;
-        case 27: addColumn({host:H2, database: DB2, table: T1, column: C2}, cb); break;
-        case 28: addColumn({host:H2, database: DB2, table: T2, column: C2}, cb); break;
-        case 29: addColumn({host:H2, database: DB2, table: T2, column: C1}, cb); break;
-        case 30: addColumn({host:H2, database: DB1, table: T2, column: C1}, cb); break;
-        case 31: addColumn({host:H2, database: DB1, table: T2, column: C2}, cb); break;
-        case 32: addColumn({host:H2, database: DB1, table: T1, column: C2}, cb); break;
-        case 33: addColumn({host:H2, database: DB1, table: T1, column: C1}, cb); break;
-        case 34: addColumn({host:H2, database: DB1, table: T1, column: C1}, cb); break; // add again for lulz
+        case 18: addColumn({host:H1, schema: DB1, table: T1, column: C1}, cb); break;
+        case 19: addColumn({host:H1, schema: DB1, table: T1, column: C2}, cb); break;
+        case 20: addColumn({host:H1, schema: DB1, table: T2, column: C2}, cb); break;
+        case 21: addColumn({host:H1, schema: DB1, table: T2, column: C1}, cb); break;
+        case 22: addColumn({host:H1, schema: DB2, table: T2, column: C1}, cb); break;
+        case 23: addColumn({host:H1, schema: DB2, table: T2, column: C2}, cb); break;
+        case 24: addColumn({host:H1, schema: DB2, table: T1, column: C2}, cb); break;
+        case 25: addColumn({host:H1, schema: DB2, table: T1, column: C1}, cb); break;
+        case 26: addColumn({host:H2, schema: DB2, table: T1, column: C1}, cb); break;
+        case 27: addColumn({host:H2, schema: DB2, table: T1, column: C2}, cb); break;
+        case 28: addColumn({host:H2, schema: DB2, table: T2, column: C2}, cb); break;
+        case 29: addColumn({host:H2, schema: DB2, table: T2, column: C1}, cb); break;
+        case 30: addColumn({host:H2, schema: DB1, table: T2, column: C1}, cb); break;
+        case 31: addColumn({host:H2, schema: DB1, table: T2, column: C2}, cb); break;
+        case 32: addColumn({host:H2, schema: DB1, table: T1, column: C2}, cb); break;
+        case 33: addColumn({host:H2, schema: DB1, table: T1, column: C1}, cb); break;
+        case 34: addColumn({host:H2, schema: DB1, table: T1, column: C1}, cb); break; // add again for lulz
         // add some FK (16*16*6=)
         // six for one of 16*16 variants
         case 35:
-        addFK({host: H1, database: DB1, table: T1, columns:[C1]}
-        ,{host: H2, database: DB2, table: T2, columns:[C1]}, cb);
+        addFK({host: H1, schema: DB1, table: T1, columns:[C1]}
+        ,{host: H2, schema: DB2, table: T2, columns:[C1]}, cb);
         break;
         case 36:
-        addFK({host: H1, database: DB1, table: T1, columns:[C2]}
-        ,{host: H2, database: DB2, table: T2, columns:[C2]}, cb);
+        addFK({host: H1, schema: DB1, table: T1, columns:[C2]}
+        ,{host: H2, schema: DB2, table: T2, columns:[C2]}, cb);
         break;
         case 37:
-        addFK({host: H1, database: DB1, table: T1, columns:[C1]}
-        ,{host: H2, database: DB2, table: T2, columns:[C2]}, cb);
+        addFK({host: H1, schema: DB1, table: T1, columns:[C1]}
+        ,{host: H2, schema: DB2, table: T2, columns:[C2]}, cb);
         break;
         case 38:
-        addFK({host: H1, database: DB1, table: T1, columns:[C2]}
-        ,{host: H2, database: DB2, table: T2, columns:[C1]}, cb);
+        addFK({host: H1, schema: DB1, table: T1, columns:[C2]}
+        ,{host: H2, schema: DB2, table: T2, columns:[C1]}, cb);
         break;
         case 39:
-        addFK({host: H1, database: DB1, table: T1, columns:[C1, C2]}
-        ,{host: H2, database: DB2, table: T2, columns:[C1, C2]}, cb);
+        addFK({host: H1, schema: DB1, table: T1, columns:[C1, C2]}
+        ,{host: H2, schema: DB2, table: T2, columns:[C1, C2]}, cb);
         break;
         case 40:
-        addFK({host: H1, database: DB1, table: T1, columns:[C2, C1]}
-        ,{host: H2, database: DB2, table: T2, columns:[C1, C2]}, cb);
+        addFK({host: H1, schema: DB1, table: T1, columns:[C2, C1]}
+        ,{host: H2, schema: DB2, table: T2, columns:[C1, C2]}, cb);
         break;
         // the thing is: this could be vice-versa, so it is not 16*16/2
         // it could be reflective, so it is not 16*15, and it is even not both 16*15/2 binomial either
         
         // repeat some column for lulz
         case 41:
-        addFK({host: H1, database: DB1, table: T1, columns:[C2]}
-          ,{host: H2, database: DB2, table: T2, columns:[C1]}, cb); // should be error
+        addFK({host: H1, schema: DB1, table: T1, columns:[C2]}
+          ,{host: H2, schema: DB2, table: T2, columns:[C1]}, cb); // should be error
         break;
         // reflect it for checking mirroring
         case 42:
-        addFK({host: H2, database: DB2, table: T2, columns:[C1]}
-          ,{host: H1, database: DB1, table: T1, columns:[C2]}, cb);
+        addFK({host: H2, schema: DB2, table: T2, columns:[C1]}
+          ,{host: H1, schema: DB1, table: T1, columns:[C2]}, cb);
         break;
         // make reflective connection on the table itself
         case 43:
-        addFK({host: H1, database: DB1, table: T1, columns:[C2]}
-          ,{host: H1, database: DB1, table: T1, columns:[C2]}, cb);
+        addFK({host: H1, schema: DB1, table: T1, columns:[C2]}
+          ,{host: H1, schema: DB1, table: T1, columns:[C2]}, cb);
         break;
         // make it more stupid :D
         case 44:
-        addFK({host: H1, database: DB1, table: T1, columns:[C1, C2]}
-          ,{host: H1, database: DB1, table: T1, columns:[C2, C1]}, cb); // don't make any sense
+        addFK({host: H1, schema: DB1, table: T1, columns:[C1, C2]}
+          ,{host: H1, schema: DB1, table: T1, columns:[C2, C1]}, cb); // don't make any sense
         break;
         // try to add it again for lulz
         case 45:
-        addFK({host: H1, database: DB1, table: T1, columns:[C1, C2]}
-          ,{host: H1, database: DB1, table: T1, columns:[C2, C1]}, cb); // don't make any sense too
+        addFK({host: H1, schema: DB1, table: T1, columns:[C1, C2]}
+          ,{host: H1, schema: DB1, table: T1, columns:[C2, C1]}, cb); // don't make any sense too
         break;
         // protection from the idiot: duplicate pair twice
         case 46:
-        addFK({host: H1, database: DB2, table: T2, columns:[C1, C1]}
-          ,{host: H2, database: DB1, table: T1, columns:[C2, C2]}, cb);
+        addFK({host: H1, schema: DB2, table: T2, columns:[C1, C1]}
+          ,{host: H2, schema: DB1, table: T1, columns:[C2, C2]}, cb);
         break;     
       }
       // that's all for tests

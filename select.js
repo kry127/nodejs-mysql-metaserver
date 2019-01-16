@@ -190,6 +190,15 @@ class node_join {
     }
 }
 
+// also define class parse_error:
+class parse_error {
+    constructor (msg, lexem_from, lexem_end) {
+        this.msg = msg,
+        this.lexem_from = lexem_from,
+        this.lexem_end = lexem_end
+    }
+}
+
 // parsing strategy is simple:
 //  - the root node is of SELECT type
 //  - when finding column definition, add node_column_raw to the SELECT statement
@@ -197,21 +206,13 @@ class node_join {
 //  - when finding JOIN, add node_join to the end of node_select
 //  - in JOIN presented array of node_on, which presents pair of node_column[_raw]
 // Then, on the builded tree, we should refine tree in semantic phase
-// Semantics will depend on: currently using host.database, storing metadata
+// Semantics will depend on: currently using host.schema, storing metadata
 
 // input parameters:
 //  1. sql source code
 function ast(sql)
 {
     var lexems = lexer(sql); // we incorporate sql parser in AST parser. Why not?
-
-    class parse_error {
-        constructor (msg, lexem_from, lexem_end) {
-            this.msg = msg,
-            this.lexem_from = lexem_from,
-            this.lexem_end = lexem_end
-        }
-    }
 
     function throwError(i, msg) {
         let lex = lexems[i]
@@ -507,7 +508,7 @@ OurSQL: ${rest_of_sql}`
 //
 //  1. for table in FROM statement:
 //-> 1.1. check existence
-//     it means in AST presented context host.database.table and table record presented
+//     it means in AST presented context host.schema.table and table record presented
 //-> 1.2. get all columns of table, store them in node if needed
 //  2. for every JOIN statement:
 //-> 2.1. do steps 1.1 and 1.2 for table in JOIN statement
@@ -545,21 +546,136 @@ OurSQL: ${rest_of_sql}`
 // pitifully, there should be callback chaining, because steps 1 and 3 depends on async MySQL
 // so 1 and 3 would be nonblocking and should accept callback result
 
-function semantic(sql, callback, environ) {
+
+// metaserver connection for semantic parser
+var metasrv = require('./metaserver');
+
+
+function semantic(sql, callback, environment) {
+    // through environ we will look at defined host and schema
+    // maybe store some other syncing information, like state machine
+    var env = environment; // shorthand of this long name
+    if (typeof environment === "undefined") {
+        env = {} // .host and .schema could be defined here
+    }
+
     // let's incorporate AST builder in semantic builder
-    var ast_array = ast(sql);
+    env.ast_array = ast(sql);
+    env.ast_array_i = 0;
     // ast_array contains node_select and parse_error
     // both of them contain object "sql", which has the original SQL, lexems of the query
     // so semantic parser has access to source code
     
-    // through environ we will look at defined host and schema
-    // maybe store some other syncing information, like state machine
-    if (typeof environ === "undefined") {
-        environ = {}
+    env.phase = 1; // begin with first phase
+    env.state = 0; // state -- initial
+    phase1(); // start
+
+    function throwError(object) {
+        if (typeof callback === "function")
+            setTimeout(function() { // we should make it truly async
+                callback( new parse_error(object, 0, 0))
+            }, 0);
+            
+        nextAST()
+        setTimeout(function() {
+            phase1() // call phase1 again with next asts
+        }, 0);
     }
-    function phase1() {
-        
+
+    function nextAST() {
+        env.ast_array_i++;
+        env.phase = 1;
+        env.state = 0;
     }
+
+    // parser phase 1 -- table processing
+    function phase1(err, result) {
+        if (err) {
+            if (typeof callback === "function")
+                callback(err, null); //an error occured, should be processed in upstream
+            return;
+        }
+
+        switch_repeat: do {
+            switch (env.state) {
+            case 0:
+                // get next AST result, if any
+                if (env.ast_array_i >= env.ast_array.length)
+                    return; // end, if no AST result presented
+
+                var ast = env.ast_array[env.ast_array_i]
+                // check if it is parse error, if it is, give appropriate callback to user
+                if (ast instanceof parse_error) {
+                    return throwError(ast); // restart phase 1 with next ast
+                } else if (!(ast instanceof node_select)) {
+                    // assume we processing only node_selects
+                    return throwError("Internal parsing error: root node is not of type 'node_select'.");
+                }
+                // here guaranteed, that ast will be valid
+                // get all tables in tree structure, gather them into single array
+                env.tables = [ast.table]
+                env.tables.push(...ast.joins.map(join=>join.table))
+                env.tables_i = 0
+                env.state++ // move to next state
+                metasrv.connect(phase1); // connect to metasql server
+                return; // wait for callback
+            case 1:
+                // get table if any
+                if (env.tables_i >= env.tables.length)
+                    return; // end, if no AST result presented
+                var table = env.tables[env.tables_i]
+                // check if it is typeof node_table
+                if (!(table instanceof node_table))
+                {
+                    return throwError("Internal parsing error: exptected 'node_table'.");
+                }
+                // supply table with host and schema from environment, if needed
+                if (!table.host)  {
+                    if (env.host)
+                        table.host = env.host
+                    else 
+                        return throwError(`Host is not specified for table ${table.name}`);
+                }
+                if (!table.schema)  {
+                    if (env.schema)
+                        table.schema = env.schema
+                    else 
+                        return throwError(`Schema is not specified for table ${table.name}`);
+                }
+                env.state++ // next state -- check table existence
+                metasrv.checkTable({host: table.host, schema: table.schema, table: table.name}, phase1)
+                return; // wait for callback
+            case 2:
+                var table = env.tables[env.tables_i]
+                if (!result) {
+                    return throwError(`Table ${table.name} is not exist`);
+                }
+                // now let's get columns of table
+                env.state++ // next state
+                metasrv.getTableColumns({host: table.host, schema: table.schema, table: table.name}, phase1);
+                return; //wait for callback
+            case 3:
+                var table = env.tables[env.tables_i]
+                table.columns = result // save list of columns :)
+                // check, if all tables were considered
+                if (env.tables_i < env.tables.length - 1) {
+                    env.tables_i++
+                    env.state = 1
+                    break // continue with state 1 -- check table
+                }
+                // all tables considered, moving to phase 2
+                // but now let's assume we've done anything
+                var ast = env.ast_array[env.ast_array_i]
+                if (typeof callback === "function")
+                    setTimeout(function() { // we should make it truly async
+                        callback(null, ast)
+                    }, 0);
+                nextAST();
+                break;
+                
+            }
+        } while (true);
+    } 
 }
 
 
@@ -567,12 +683,17 @@ function semantic(sql, callback, environ) {
 var sampleSQL = "SELECT STUDENT.*,STUDENT.ID \nFROM STUDENT \nwhere `lol`=`kek cheburek`"
 var parsedSQL = ast(sampleSQL);
 
-var sql1 = "SELECT * FROM USERS;"
+var sql1 = "SELECT Name FROM city;"
 var sql2 = "SELECT A.a, B.b FROM A JOIN M ON M.a = A.a AND M.b = B.b JOIN K ON K.m = M.m;"
 var sql3 = "SELECT A FROM B; SELECT B ON FROM C; select C from `a s d f g ; e $`;"
 
 var psql1 = ast(sql1);
 var psql2 = ast(sql2);
 var psql3 = ast(sql3);
+
+semantic(sql1, function(err, result) {
+    console.error(err);
+    console.log(result);
+}, {host:"localhost", schema:"world"});
 
 var nop =  0;

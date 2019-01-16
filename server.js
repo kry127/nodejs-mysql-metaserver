@@ -152,7 +152,7 @@ function session(credential, db, table) {
       // if db var present, check if it is presented in scheme
       if (db) {
         if (schemas.arr.indexOf(db) == -1) {
-          console.error(`Error: database ${db} is not presented in list :(`);
+          console.error(`Error: schema ${db} is not presented in list :(`);
           return;
         } else {
           schemas.arr=[db] // left only db to analyze
@@ -164,7 +164,7 @@ function session(credential, db, table) {
     
     case qse.add_schemas:
       // here we can add each element of schemas.arr to metadata database
-      metasrv.addDatabase({host: credential.host, database: schemas.current()}, query_state_machine_callback)
+      metasrv.addSchema({host: credential.host, schema: schemas.current()}, query_state_machine_callback)
       query_state=qse.get_tables_prep
       break;
     case qse.get_tables_prep: // when schema added -- continue
@@ -192,7 +192,7 @@ function session(credential, db, table) {
     case qse.add_tables:
       // here we can add each element of tables.arr to metadata database
       metasrv.addTable(
-        {host: credential.host, database: schemas.current(), table: tables.current()},
+        {host: credential.host, schema: schemas.current(), table: tables.current()},
         query_state_machine_callback
       )
       query_state=qse.get_columns_prep
@@ -210,7 +210,7 @@ function session(credential, db, table) {
           return {
                 // full qualifier
                 host: credential.host,
-            database: schemas.current(),
+              schema: schemas.current(),
                table: tables.current(),
                 // column itself
               column: e.COLUMN_NAME,
@@ -243,11 +243,11 @@ function session(credential, db, table) {
           referenced_table_name is not null
       and 
       (
-            table_schema = '${col.database}'
+            table_schema = '${col.schema}'
         AND table_name   = '${col.table}'
         AND column_name  = '${col.column}'
         OR
-            referenced_table_schema = '${col.database}'
+            referenced_table_schema = '${col.schema}'
         AND referenced_table_name   = '${col.table}'
         AND referenced_column_name  = '${col.column}'
       );
@@ -297,7 +297,7 @@ function session(credential, db, table) {
       )
       if (!good) {
         console.error(`Error: dispersed foreign key ${connection.host}.${schemas.current()}.${fk_def.constraint_name}.`)
-        console.error("The key contain multiple pairs from different tables, schemas and database, check information_schema.")
+        console.error("The key contain multiple pairs from different tables, schemas and hosts, check information_schema.")
         query_state = qse.cycle_analyze; // ignore error and continue key iteration anyway
         query_state_machine_callback(); // call again
         break;
@@ -311,13 +311,13 @@ function session(credential, db, table) {
       // if all good, then we can add FK to metadata database
       var column_group_1 = {
         host: credential.host,
-        database: result[0].table_schema,
+        schema: result[0].table_schema,
         table: result[0].table_name,
         columns: result.map(row=>row.column_name)
       }
       var column_group_2 = {
         host: credential.host,
-        database: result[0].referenced_table_schema,
+        schema: result[0].referenced_table_schema,
         table: result[0].referenced_table_name,
         columns: result.map(row=>row.referenced_column_name)
       }
