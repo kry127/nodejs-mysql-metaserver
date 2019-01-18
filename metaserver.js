@@ -70,7 +70,8 @@ function connect(callback) {
 }
 
 function disconnect() {
-  con.end();
+  if (con)
+    con.end();
   con = null;
 }
 

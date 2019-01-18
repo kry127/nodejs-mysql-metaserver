@@ -9,7 +9,7 @@
 <host> ::= <name>
 <name> ::= <alpha>{<alnum>} | `<alpha>{<alnum>|<space>}`
 <alnum> ::= <alpha> | <number>
-<alpha> ::= A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
+<alpha> ::= _|A|B|C|D|E|F|G|H|I|J|K|L|M|N|O|P|Q|R|S|T|U|V|W|X|Y|Z|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u|v|w|x|y|z
 <number> ::= 0|1|2|3|4|5|6|7|8|9
 <space> ::=  |\t|\n|\v|\r
 */
@@ -73,7 +73,7 @@ function lexer(input) {
         i = j.clone();
     }
     
-    function alpha(char) {char = char.toLowerCase(); return char >= 'a' && char <= 'z'}
+    function alpha(char) {char = char.toLowerCase(); return char >= 'a' && char <= 'z' || char == "_"}
     function number(char) {return char >= '0' && char <= '9'}
     function space(char) {return " \n\t\v\r".indexOf(char) != -1}
 
@@ -91,7 +91,12 @@ function lexer(input) {
                 i.next() // lookin at next symbol immediately
                 j = i.clone()
                 state = 2;
-            } else if (".,=;*".indexOf(ichr) != -1) { // single lexems
+            } else if (".,=;*-".indexOf(ichr) != -1) { // single lexems
+                if (input.substr(i.position, 2) === "--") {
+                    // this is comment
+                    state = 3;
+                    break;
+                }
                 j = i.clone();
                 j.next();
                 addLexem(lex_type.OPERATOR);
@@ -118,6 +123,12 @@ function lexer(input) {
             }
             j.next()
             break;
+        case 3:
+            if (ichr == "\n") {
+                state = 0;
+            }
+            i.next();
+            break;
         case 1000: // error state
             let token = input.substr(i.position, j.position - i.position)
             throw `Unexpected token: ${token} at column ${i.column} line ${i.row}!`;
@@ -142,6 +153,12 @@ class node_column_raw {
         this.column = column,
         this.alias = alias// for future :)
     }
+    toString() {
+        if (this.host && !this.schema)
+            return [this.host, " ", this.table, this.column].filter(e=>e).join(".")
+        else
+            return [this.host, this.schema, this.table, this.column].filter(e=>e).join(".")
+    }
 }
 // table proper definition
 // host and schema are strings with no link to actual entities of the tree
@@ -153,6 +170,9 @@ class node_table{
         this.name = name,
         this.alias = alias // for future :)
     }
+    toString() {
+        return [this.host, this.schema, this.name].filter(e=>e).join(".")
+    }
 }
 // column proper definition
 class node_column {
@@ -160,6 +180,9 @@ class node_column {
         this.name = name,
         this.table = table, // link to node_table
         this.alias  = alias
+    }
+    toString() {
+        return this.table.toString() + "." + this.name
     }
 }
 // SELECT statement node (raw and proper)
@@ -196,6 +219,9 @@ class parse_error {
         this.msg = msg,
         this.lexem_from = lexem_from,
         this.lexem_end = lexem_end
+    }
+    toString() {
+        return this.msg;
     }
 }
 
@@ -272,6 +298,7 @@ OurSQL: ${rest_of_sql}`
                 else if (lexems[i].lexem === '.') {
                     if (k == 1) { // empty schema is allowed
                         empty_schema = true // but instead we expect fully qualified name (no star at table name)
+                        i--; // firing "next" on i is the next step
                         tokens.push(null)
                     } else
                         throwError(i, "Only empty schema is allowed (in context of USE [HOST].[SCHEMA]")
@@ -323,9 +350,10 @@ OurSQL: ${rest_of_sql}`
                 tokens.push(lexems[i].lexem)
                 break;
             case lex_type.OPERATOR:
-                if (lexems[i] === '.') {
+                if (lexems[i].lexem === '.') {
                     if (k == 1) { // empty schema is allowed
                         empty_schema = true // but instead we expect fully qualified name
+                        i--; // firing "next" on i is the next step
                         tokens.push(null)
                     } else
                         throwError(i, "Only empty schema is allowed (in context of USE [HOST].[SCHEMA]")
@@ -573,6 +601,10 @@ function semantic(sql, callback, environment) {
     function throwError(object) {
         if (typeof callback === "function")
             setTimeout(function() { // we should make it truly async
+                if (object instanceof parse_error) {
+                    callback(object)
+                    return
+                }
                 callback( new parse_error(object, 0, 0))
             }, 0);
             
@@ -588,6 +620,21 @@ function semantic(sql, callback, environment) {
         env.state = 0;
     }
 
+    // checks that column can be derived from table
+    function columnCompliantToTable(_node_table, _node_column_raw) {
+        if (!_node_table.columns
+            || _node_column_raw.column!=="*"
+            && _node_table.columns.indexOf(_node_column_raw.column) == -1)
+            return false; // principally cannot be true
+        if (_node_column_raw.table && _node_column_raw.table != _node_table.name)
+            return false; // specified table  in column definition differs
+        if (_node_column_raw.schema && _node_column_raw.schema != _node_table.schema)
+            return false; // specified schema in column definition differs
+        if (_node_column_raw.host && _node_column_raw.host != _node_table.host)
+            return false; // specified schema in column definition differs
+        return true;
+    }
+
     // parser phase 1 -- table processing
     function phase1(err, result) {
         if (err) {
@@ -600,8 +647,12 @@ function semantic(sql, callback, environment) {
             switch (env.state) {
             case 0:
                 // get next AST result, if any
-                if (env.ast_array_i >= env.ast_array.length)
-                    return; // end, if no AST result presented
+                if (env.ast_array_i >= env.ast_array.length) {
+                    // end, if no AST result presented
+                    env.state=3250;
+                    metasrv.disconnect(phase1); // close connection to metasql server
+                    return;
+                }
 
                 var ast = env.ast_array[env.ast_array_i]
                 // check if it is parse error, if it is, give appropriate callback to user
@@ -634,13 +685,13 @@ function semantic(sql, callback, environment) {
                     if (env.host)
                         table.host = env.host
                     else 
-                        return throwError(`Host is not specified for table ${table.name}`);
+                        return throwError(`Host is not specified for table ${table}`);
                 }
                 if (!table.schema)  {
                     if (env.schema)
                         table.schema = env.schema
                     else 
-                        return throwError(`Schema is not specified for table ${table.name}`);
+                        return throwError(`Schema is not specified for table ${table}`);
                 }
                 env.state++ // next state -- check table existence
                 metasrv.checkTable({host: table.host, schema: table.schema, table: table.name}, phase1)
@@ -648,7 +699,7 @@ function semantic(sql, callback, environment) {
             case 2:
                 var table = env.tables[env.tables_i]
                 if (!result) {
-                    return throwError(`Table ${table.name} is not exist`);
+                    return throwError(`Table ${table} is not exist`);
                 }
                 // now let's get columns of table
                 env.state++ // next state
@@ -664,15 +715,73 @@ function semantic(sql, callback, environment) {
                     break // continue with state 1 -- check table
                 }
                 // all tables considered, moving to phase 2
-                // but now let's assume we've done anything
+                env.state++;
+                break;
+            case 4:
+                // here we should map columns to tables
+                // joins
                 var ast = env.ast_array[env.ast_array_i]
+                var list_tbl = [ast.table] // for "looking up" for columns
+                for (let j = 0; j < ast.joins.length; j++) {
+                    var join = ast.joins[j]
+                    for (let o = 0; o < join.on.length; o++) {
+                        var on = join.on[o];
+                        // check, who is compliant to join's table
+                        let l_comp = columnCompliantToTable(join.table, on.left)
+                        let r_comp = columnCompliantToTable(join.table, on.right)
+                        // not necessary condition really, but why not?
+                        if ((l_comp || r_comp) == false)
+                            return throwError(`ON statement for table ${join.table} is invalid: both columns ${on.left} and ${on.right} are not belong to the table.`)
+                        // let's define, that (but not really necessary too)
+                        if (l_comp && r_comp)
+                            return throwError(`Table ${join.table} shouldn't bind to itself by ${on.left} = ${on.right} condition.`)
+                        // swap tables, so the column that refers join's table would be left
+                        if (r_comp && !l_comp) {
+                            [on.left, on.right] = [on.right, on.left]
+                        }
+                        // find, what table refers on.right
+                        var r_table;
+                        if (!(l_comp && r_comp)) {
+                            var list_tbl_comp = list_tbl.filter(t=>columnCompliantToTable(t, on.right))
+                            if (list_tbl_comp.length == 0) {
+                                return throwError(`No appropriate table for column ${on.right.column}`)
+                            } else if (list_tbl_comp.length > 1) {
+                                return throwError(`The column ${on.right.column} is ambigulous`)
+                            }
+                            r_table = list_tbl_comp[0];
+                        }
+                        // restructure both nodes
+                        var l_node = new node_column(on.left.column, join.table, on.left.alias);
+                        var r_node = new node_column(on.right.column, r_table, on.right.alias);
+                        // restructure on node
+                        [on.left, on.right] = [l_node, r_node]
+                    }
+                    list_tbl.push(join.table)
+                }
+                // check, that list_tbl contains defined columns
+                for (let c = 0; c < ast.column_list.length; c++) {
+                    let col = ast.column_list[c];
+
+                    var list_tbl_comp = list_tbl.filter(t=>columnCompliantToTable(t, col))
+                    if (list_tbl_comp.length == 0) {
+                        return throwError(`No appropriate table for column ${col}`)
+                    } else if (list_tbl_comp.length > 1 && col.column !== "*") {
+                        return throwError(`The column ${col} is ambigulous`)
+                    }
+                    var table = list_tbl_comp[0];
+                    // restructure column node
+                    var col_node = new node_column(col.column, r_table, col.alias);
+                    // restructure select node
+                    ast.column_list[c] = col_node
+                }
                 if (typeof callback === "function")
                     setTimeout(function() { // we should make it truly async
                         callback(null, ast)
                     }, 0);
                 nextAST();
+
+            case 3250: //  for closing connection
                 break;
-                
             }
         } while (true);
     } 
@@ -683,17 +792,28 @@ function semantic(sql, callback, environment) {
 var sampleSQL = "SELECT STUDENT.*,STUDENT.ID \nFROM STUDENT \nwhere `lol`=`kek cheburek`"
 var parsedSQL = ast(sampleSQL);
 
-var sql1 = "SELECT Name FROM city;"
+var sql1 = "SELECT ID FROM city;"
 var sql2 = "SELECT A.a, B.b FROM A JOIN M ON M.a = A.a AND M.b = B.b JOIN K ON K.m = M.m;"
 var sql3 = "SELECT A FROM B; SELECT B ON FROM C; select C from `a s d f g ; e $`;"
+
+var valid_query =  `
+SELECT film_text.title, first_name, last_name, rental_date, return_date
+FROM localhost..rental
+JOIN inventory ON inventory_id = rental.inventory_id --AND inventory.film_id = film_text.film_id
+JOIN localhost..film_text ON inventory.film_id = film_text.film_id --AND film_id = *
+JOIN localhost..customer ON customer_id = rental.customer_id AND address_id = address_id
+;SELECT A FROM B;`
 
 var psql1 = ast(sql1);
 var psql2 = ast(sql2);
 var psql3 = ast(sql3);
 
-semantic(sql1, function(err, result) {
-    console.error(err);
+semantic(valid_query, function(err, result) {
+    if (err) {
+        console.error(""+ err);
+        return;
+    }
     console.log(result);
-}, {host:"localhost", schema:"world"});
+}, {host: "localhost", schema:"sakila"});
 
 var nop =  0;
