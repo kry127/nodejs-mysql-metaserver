@@ -264,7 +264,7 @@ OurSQL: ${rest_of_sql}`
     function next(i) {
         i++
         if (i >= lexems.length)
-            throwError("Unexpected EOF")
+            throwError(i-1, "Unexpected EOF")
         return i
     }
 
@@ -787,12 +787,17 @@ function semantic(sql, callback, environment) {
     } 
 }
 
+module.exports = {
+    // export only semantic analyzer
+    semantic: semantic
+}
+
 
 // tests
-var sampleSQL = "SELECT STUDENT.*,STUDENT.ID \nFROM STUDENT \nwhere `lol`=`kek cheburek`"
+/*var sampleSQL = "SELECT STUDENT.*,STUDENT.ID \nFROM STUDENT \nwhere `lol`=`kek cheburek`"
 var parsedSQL = ast(sampleSQL);
 
-var sql1 = "SELECT ID FROM city;"
+var sql1 = "SELECT ID FROM city"
 var sql2 = "SELECT A.a, B.b FROM A JOIN M ON M.a = A.a AND M.b = B.b JOIN K ON K.m = M.m;"
 var sql3 = "SELECT A FROM B; SELECT B ON FROM C; select C from `a s d f g ; e $`;"
 
@@ -817,3 +822,4 @@ semantic(valid_query, function(err, result) {
 }, {host: "localhost", schema:"sakila"});
 
 var nop =  0;
+*/

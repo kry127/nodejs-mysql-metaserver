@@ -2,6 +2,7 @@ var mysql = require('mysql');
 var fs = require('fs');
 const readline = require('readline');
 var metasrv = require('./metaserver');
+var select = require('./select')
 
 // how to make sync nodejs mysql:
 // https://html5hive.org/node-js-quickies-working-with-mysql/
@@ -31,14 +32,21 @@ var credentials = [
 
 // these schemas are not analyzed implicitly
 var tabu = ["information_schema", "sys", "performance_schema"]
+// environment (host.database) for 'select' metaqueries
+var env = {}
 
 rl.prompt()
 rl.on('line', (input) => {
   let _str_get_help = `
   get <server>:[user]:[password]:[port][/db[/table]]
-  select <column1> [,<column2>[,...[,<columnn>]]] from <table1> join <table2> on <columni>=<columnj>`;
+  use [host]:[database]
+  unuse
+  select <column1>{,<column>} from <table> {join <table> on <column>=<column> {and <column>=<column>}}
+  exit
+  `;
 
   var inp_arr = input.split(" ")
+  inp_arr[0]=  inp_arr[0].toLowerCase();
 
   if (inp_arr[0].startsWith("get")) {
     var get_args = inp_arr.slice(1).join(' ');
@@ -64,8 +72,35 @@ rl.on('line', (input) => {
     return;
 
   } else if (inp_arr[0].startsWith("help")) {
-    console.log("Available commands: \n")
+    console.log("Available commands:")
     console.log(_str_get_help);
+  } else if (inp_arr[0].startsWith("use")) {
+    if (inp_arr[1]) {
+      env.host = inp_arr[1].split(":")[0]
+      env.schema = inp_arr[1].split(":")[1]
+      console.log(`Context changed: host=${env.host}, schema=${env.schema}`)
+    } else {
+      console.log(`Current context: host=${env.host}, schema=${env.schema}`)
+    }
+  } else if (inp_arr[0].startsWith("unuse")) {
+    delete env.host
+    delete env.schema
+    console.log("Context cleared")
+  } else if (inp_arr[0].startsWith("select")) {
+    rl.pause(); // pause rl exec
+    select.semantic(input, function(err, result) {
+      if (err) {
+        console.error(err.toString())
+      } else {
+        console.log("Query OK.");
+        console.log(result);
+      }
+      rl.resume();
+      rl.prompt();
+    }, env)
+  } else if (["bye","quit","exit"].filter(e=>inp_arr[0].startsWith(e)).length > 0) {
+    console.log("Bye!")
+    process.exit(0);
   } else {
     console.error(`Unknown command ${input.split(' ')[0]}`)
   }
@@ -356,6 +391,7 @@ function session(credential, db, table) {
       }
       // queries ended successfully
       con.end();
+      metasrv.disconnect()
       console.log("end :)");
       rl.resume(); // resume readline
       rl.prompt();
