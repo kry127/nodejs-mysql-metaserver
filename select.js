@@ -37,6 +37,7 @@ let lex_type = Object.freeze({
     KEYWORD: 0,
     VARIABLE: 1,
     OPERATOR: 2, // .,*;=
+    VARIABLE_OR_KEYWORD: 17
 })
 
 // lexer
@@ -58,8 +59,10 @@ function lexer(input) {
         // check out lexem
         let lex = input.substr(i.position, j.position - i.position)
         // check if it is keyword
-        if (keywords.indexOf(lex.toUpperCase()) != -1)
+        if (keywords.indexOf(lex.toUpperCase()) != -1 && type == lex_type.VARIABLE_OR_KEYWORD)
             type = lex_type.KEYWORD
+        if  (type == lex_type.VARIABLE_OR_KEYWORD)
+            type = lex_type.VARIABLE
         // add lexem (it can be variable or keyword)
         lex_arr.push({
             lexem: lex,
@@ -111,7 +114,7 @@ function lexer(input) {
         case 1:
             if (!alpha(jchr) && !number(jchr)) {
                 state = 0
-                addLexem(lex_type.VARIABLE);
+                addLexem(lex_type.VARIABLE_OR_KEYWORD);
             }
             j.next()
             break;
