@@ -1,5 +1,4 @@
 var mysql = require('mysql');
-var fs = require('fs');
 const readline = require('readline');
 var metasrv = require('./metaserver');
 var select = require('./select')
