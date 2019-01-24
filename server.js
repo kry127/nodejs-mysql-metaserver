@@ -1,7 +1,7 @@
 var mysql = require('mysql');
 const readline = require('readline');
 var metasrv = require('./metaserver');
-var select = require('./select')
+var select = require('./select');
 
 // how to make sync nodejs mysql:
 // https://html5hive.org/node-js-quickies-working-with-mysql/

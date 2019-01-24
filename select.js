@@ -810,7 +810,7 @@ FROM localhost..rental
 JOIN inventory ON inventory_id = rental.inventory_id --AND inventory.film_id = film_text.film_id
 JOIN localhost..film_text ON inventory.film_id = film_text.film_id --AND film_id = *
 JOIN localhost..customer ON customer_id = rental.customer_id AND address_id = address_id
-;SELECT A FROM B;`
+;`
 
 var psql1 = ast(sql1);
 var psql2 = ast(sql2);
